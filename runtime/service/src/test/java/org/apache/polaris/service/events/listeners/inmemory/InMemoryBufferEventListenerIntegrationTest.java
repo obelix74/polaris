@@ -302,8 +302,7 @@ class InMemoryBufferEventListenerIntegrationTest {
           .buildTable(
               sessionContext,
               TableIdentifier.of(ns, "metrics_table"),
-              new Schema(
-                  List.of(Types.NestedField.required(1, "id", Types.IntegerType.get()))))
+              new Schema(List.of(Types.NestedField.required(1, "id", Types.IntegerType.get()))))
           .withSortOrder(SortOrder.unsorted())
           .withPartitionSpec(PartitionSpec.unpartitioned())
           .create();
@@ -327,8 +326,7 @@ class InMemoryBufferEventListenerIntegrationTest {
     RestApi catalogApi = client.catalogApi(authToken);
     try (Response response =
         catalogApi
-            .request(
-                "v1/" + catalogName + "/namespaces/metrics_ns/tables/metrics_table/metrics")
+            .request("v1/" + catalogName + "/namespaces/metrics_ns/tables/metrics_table/metrics")
             .header("X-Request-ID", "metrics-report-123")
             .post(Entity.json(metricsRequest))) {
       assertThat(response).returns(204, Response::getStatus);
@@ -396,8 +394,7 @@ class InMemoryBufferEventListenerIntegrationTest {
                     .build())
             .build();
 
-    try (Response response =
-        managementApi.request("v1/catalogs").post(Entity.json(catalog))) {
+    try (Response response = managementApi.request("v1/catalogs").post(Entity.json(catalog))) {
       assertThat(response).returns(Response.Status.CREATED.getStatusCode(), Response::getStatus);
     }
 

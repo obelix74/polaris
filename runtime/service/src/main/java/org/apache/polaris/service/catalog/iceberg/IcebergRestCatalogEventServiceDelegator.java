@@ -27,6 +27,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.requests.CommitTransactionRequest;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
@@ -662,15 +663,25 @@ public class IcebergRestCatalogEventServiceDelegator
       SecurityContext securityContext) {
     String catalogName = prefixParser.prefixToCatalogName(realmContext, prefix);
     Namespace namespaceObj = decodeNamespace(namespace);
+    // Decode the table name to ensure consistent identifiers in audit events
+    String decodedTable = RESTUtil.decodeString(table);
     polarisEventListener.onBeforeReportMetrics(
         new IcebergRestCatalogEvents.BeforeReportMetricsEvent(
-            eventMetadataFactory.create(), catalogName, namespaceObj, table, reportMetricsRequest));
+            eventMetadataFactory.create(),
+            catalogName,
+            namespaceObj,
+            decodedTable,
+            reportMetricsRequest));
     Response resp =
         delegate.reportMetrics(
             prefix, namespace, table, reportMetricsRequest, realmContext, securityContext);
     polarisEventListener.onAfterReportMetrics(
         new IcebergRestCatalogEvents.AfterReportMetricsEvent(
-            eventMetadataFactory.create(), catalogName, namespaceObj, table, reportMetricsRequest));
+            eventMetadataFactory.create(),
+            catalogName,
+            namespaceObj,
+            decodedTable,
+            reportMetricsRequest));
     return resp;
   }
 

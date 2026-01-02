@@ -142,12 +142,7 @@ public abstract class PolarisPersistenceEventListener implements PolarisEventLis
     // Extract trace-id and other metadata from the report's metadata map
     // This is where compute engines pass trace context for correlation
     Map<String, String> reportMetadata = scanReport.metadata();
-    if (reportMetadata != null && !reportMetadata.isEmpty()) {
-      for (Map.Entry<String, String> entry : reportMetadata.entrySet()) {
-        // Prefix with "report." to distinguish from OpenTelemetry context
-        builder.put("report." + entry.getKey(), entry.getValue());
-      }
-    }
+    addReportMetadata(builder, reportMetadata);
 
     // Extract key scan metrics for audit purposes
     ScanMetricsResult metrics = scanReport.scanMetrics();
@@ -171,17 +166,16 @@ public abstract class PolarisPersistenceEventListener implements PolarisEventLis
     builder.put("report_type", "commit");
     builder.put("snapshot_id", String.valueOf(commitReport.snapshotId()));
     builder.put("sequence_number", String.valueOf(commitReport.sequenceNumber()));
-    builder.put("operation", commitReport.operation());
+    // Null-safe handling of operation - it may be null for some report types
+    String operation = commitReport.operation();
+    if (operation != null) {
+      builder.put("operation", operation);
+    }
 
     // Extract trace-id and other metadata from the report's metadata map
     // This is where compute engines pass trace context for correlation
     Map<String, String> reportMetadata = commitReport.metadata();
-    if (reportMetadata != null && !reportMetadata.isEmpty()) {
-      for (Map.Entry<String, String> entry : reportMetadata.entrySet()) {
-        // Prefix with "report." to distinguish from OpenTelemetry context
-        builder.put("report." + entry.getKey(), entry.getValue());
-      }
-    }
+    addReportMetadata(builder, reportMetadata);
 
     // Extract key commit metrics for audit purposes
     CommitMetricsResult metrics = commitReport.commitMetrics();
@@ -192,6 +186,28 @@ public abstract class PolarisPersistenceEventListener implements PolarisEventLis
       addCounterIfPresent(builder, "removed_records", metrics.removedRecords());
       addCounterIfPresent(builder, "added_file_size_bytes", metrics.addedFilesSizeInBytes());
       addCounterIfPresent(builder, "removed_file_size_bytes", metrics.removedFilesSizeInBytes());
+    }
+  }
+
+  /**
+   * Adds report metadata entries to the builder with null-safety checks. Entries with null keys or
+   * values are skipped to prevent ImmutableMap.Builder from throwing NPE.
+   *
+   * @param builder The builder to add properties to
+   * @param reportMetadata The metadata map from the report (may be null)
+   */
+  private void addReportMetadata(
+      ImmutableMap.Builder<String, String> builder, Map<String, String> reportMetadata) {
+    if (reportMetadata != null && !reportMetadata.isEmpty()) {
+      for (Map.Entry<String, String> entry : reportMetadata.entrySet()) {
+        String key = entry.getKey();
+        String value = entry.getValue();
+        // Skip entries with null keys or values to prevent ImmutableMap.Builder NPE
+        if (key != null && value != null) {
+          // Prefix with "report." to distinguish from OpenTelemetry context
+          builder.put("report." + key, value);
+        }
+      }
     }
   }
 
