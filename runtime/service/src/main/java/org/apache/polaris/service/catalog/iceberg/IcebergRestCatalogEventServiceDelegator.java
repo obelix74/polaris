@@ -642,7 +642,16 @@ public class IcebergRestCatalogEventServiceDelegator
     return resp;
   }
 
-  /** This API is currently a no-op in Polaris. */
+  /**
+   * Handles metrics reports from compute engines (Spark, Trino, Flink, etc.).
+   *
+   * <p>This endpoint receives ScanReport and CommitReport metrics from compute engines after they
+   * perform table operations. Events are emitted before and after processing to enable audit
+   * logging and observability.
+   *
+   * <p>The metadata map in the report can contain trace context (e.g., trace_id) for correlation
+   * with other audit events such as loadTable and loadCredentials.
+   */
   @Override
   public Response reportMetrics(
       String prefix,
@@ -651,8 +660,18 @@ public class IcebergRestCatalogEventServiceDelegator
       ReportMetricsRequest reportMetricsRequest,
       RealmContext realmContext,
       SecurityContext securityContext) {
-    return delegate.reportMetrics(
-        prefix, namespace, table, reportMetricsRequest, realmContext, securityContext);
+    String catalogName = prefixParser.prefixToCatalogName(realmContext, prefix);
+    Namespace namespaceObj = decodeNamespace(namespace);
+    polarisEventListener.onBeforeReportMetrics(
+        new IcebergRestCatalogEvents.BeforeReportMetricsEvent(
+            eventMetadataFactory.create(), catalogName, namespaceObj, table, reportMetricsRequest));
+    Response resp =
+        delegate.reportMetrics(
+            prefix, namespace, table, reportMetricsRequest, realmContext, securityContext);
+    polarisEventListener.onAfterReportMetrics(
+        new IcebergRestCatalogEvents.AfterReportMetricsEvent(
+            eventMetadataFactory.create(), catalogName, namespaceObj, table, reportMetricsRequest));
+    return resp;
   }
 
   @Override

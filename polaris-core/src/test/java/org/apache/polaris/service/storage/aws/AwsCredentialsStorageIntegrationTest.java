@@ -1053,6 +1053,9 @@ class AwsCredentialsStorageIntegrationTest extends BaseStorageIntegrationTest {
     // Roles are sorted alphabetically and joined with comma
     Assertions.assertThat(capturedRequest.tags())
         .anyMatch(tag -> tag.key().equals("polaris:roles") && tag.value().equals("admin,reader"));
+    // trace_id is "unknown" when not provided in context
+    Assertions.assertThat(capturedRequest.tags())
+        .anyMatch(tag -> tag.key().equals("polaris:trace_id") && tag.value().equals("unknown"));
 
     // Verify transitive tag keys are set
     Assertions.assertThat(capturedRequest.transitiveTagKeys())
@@ -1061,7 +1064,8 @@ class AwsCredentialsStorageIntegrationTest extends BaseStorageIntegrationTest {
             "polaris:namespace",
             "polaris:table",
             "polaris:principal",
-            "polaris:roles");
+            "polaris:roles",
+            "polaris:trace_id");
   }
 
   @Test
@@ -1154,8 +1158,8 @@ class AwsCredentialsStorageIntegrationTest extends BaseStorageIntegrationTest {
             context);
 
     AssumeRoleRequest capturedRequest = requestCaptor.getValue();
-    // All 5 tags are always included; missing values use "unknown" placeholder
-    Assertions.assertThat(capturedRequest.tags()).hasSize(5);
+    // All 6 tags are always included; missing values use "unknown" placeholder
+    Assertions.assertThat(capturedRequest.tags()).hasSize(6);
     Assertions.assertThat(capturedRequest.tags())
         .anyMatch(tag -> tag.key().equals("polaris:catalog") && tag.value().equals("test-catalog"));
     Assertions.assertThat(capturedRequest.tags())
@@ -1168,6 +1172,8 @@ class AwsCredentialsStorageIntegrationTest extends BaseStorageIntegrationTest {
         .anyMatch(tag -> tag.key().equals("polaris:table") && tag.value().equals("unknown"));
     Assertions.assertThat(capturedRequest.tags())
         .anyMatch(tag -> tag.key().equals("polaris:roles") && tag.value().equals("unknown"));
+    Assertions.assertThat(capturedRequest.tags())
+        .anyMatch(tag -> tag.key().equals("polaris:trace_id") && tag.value().equals("unknown"));
   }
 
   @Test
@@ -1276,8 +1282,8 @@ class AwsCredentialsStorageIntegrationTest extends BaseStorageIntegrationTest {
             CredentialVendingContext.empty());
 
     AssumeRoleRequest capturedRequest = requestCaptor.getValue();
-    // All 5 tags are always included; missing values use "unknown" placeholder
-    Assertions.assertThat(capturedRequest.tags()).hasSize(5);
+    // All 6 tags are always included; missing values use "unknown" placeholder
+    Assertions.assertThat(capturedRequest.tags()).hasSize(6);
     Assertions.assertThat(capturedRequest.tags())
         .anyMatch(
             tag -> tag.key().equals("polaris:principal") && tag.value().equals("test-principal"));
@@ -1290,6 +1296,8 @@ class AwsCredentialsStorageIntegrationTest extends BaseStorageIntegrationTest {
         .anyMatch(tag -> tag.key().equals("polaris:table") && tag.value().equals("unknown"));
     Assertions.assertThat(capturedRequest.tags())
         .anyMatch(tag -> tag.key().equals("polaris:roles") && tag.value().equals("unknown"));
+    Assertions.assertThat(capturedRequest.tags())
+        .anyMatch(tag -> tag.key().equals("polaris:trace_id") && tag.value().equals("unknown"));
   }
 
   /**
