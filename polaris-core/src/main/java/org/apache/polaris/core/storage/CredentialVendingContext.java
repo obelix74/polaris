@@ -20,6 +20,7 @@ package org.apache.polaris.core.storage;
 
 import java.util.Optional;
 import org.apache.polaris.immutables.PolarisImmutable;
+import org.immutables.value.Value;
 
 /**
  * Context information for credential vending operations. This context is used to provide metadata
@@ -73,7 +74,13 @@ public interface CredentialVendingContext {
    * The OpenTelemetry trace ID for end-to-end correlation. This enables correlation between
    * credential vending (CloudTrail), catalog operations (Polaris events), and metrics reports from
    * compute engines.
+   *
+   * <p>This field is marked as {@link Value.Auxiliary} to exclude it from {@code equals()} and
+   * {@code hashCode()} methods. This is critical for cache key comparison - including trace ID
+   * would prevent cache hits since every request has a unique trace ID. The trace ID is for
+   * correlation/audit purposes only and should not affect credential caching behavior.
    */
+  @Value.Auxiliary
   Optional<String> traceId();
 
   /**
