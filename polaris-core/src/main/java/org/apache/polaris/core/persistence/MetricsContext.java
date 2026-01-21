@@ -19,7 +19,6 @@
 package org.apache.polaris.core.persistence;
 
 import jakarta.annotation.Nonnull;
-import jakarta.annotation.Nullable;
 import java.util.Optional;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.polaris.immutables.PolarisImmutable;
@@ -75,4 +74,3 @@ public interface MetricsContext {
     return ImmutableMetricsContext.builder();
   }
 }
-

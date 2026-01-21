@@ -50,7 +50,8 @@ final class NoOpMetricsPersistence implements MetricsPersistence {
   }
 
   @Override
-  public void writeCommitReport(@Nonnull CommitReport commitReport, @Nonnull MetricsContext context) {
+  public void writeCommitReport(
+      @Nonnull CommitReport commitReport, @Nonnull MetricsContext context) {
     // No-op: metrics are discarded
   }
 
@@ -100,4 +101,3 @@ final class NoOpMetricsPersistence implements MetricsPersistence {
     return 0;
   }
 }
-

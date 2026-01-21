@@ -91,4 +91,3 @@ public class MetricsPersistenceProducer {
     return MetricsPersistence.NOOP;
   }
 }
-

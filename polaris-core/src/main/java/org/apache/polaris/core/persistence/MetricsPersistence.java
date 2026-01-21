@@ -21,7 +21,6 @@ package org.apache.polaris.core.persistence;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import java.util.List;
-import java.util.Optional;
 import org.apache.iceberg.metrics.CommitReport;
 import org.apache.iceberg.metrics.ScanReport;
 
@@ -155,4 +154,3 @@ public interface MetricsPersistence {
     return deleteScanReportsOlderThan(olderThanMs) + deleteCommitReportsOlderThan(olderThanMs);
   }
 }
-

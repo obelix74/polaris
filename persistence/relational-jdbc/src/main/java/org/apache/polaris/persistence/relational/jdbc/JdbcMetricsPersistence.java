@@ -22,7 +22,6 @@ import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 import org.apache.iceberg.metrics.CommitReport;
 import org.apache.iceberg.metrics.ScanReport;
 import org.apache.polaris.core.persistence.MetricsContext;
@@ -90,7 +89,8 @@ public class JdbcMetricsPersistence implements MetricsPersistence {
   }
 
   @Override
-  public void writeCommitReport(@Nonnull CommitReport commitReport, @Nonnull MetricsContext context) {
+  public void writeCommitReport(
+      @Nonnull CommitReport commitReport, @Nonnull MetricsContext context) {
     try {
       String namespace = context.tableIdentifier().namespace().toString();
       String catalogId = context.catalogId().orElse(null);
@@ -212,4 +212,3 @@ public class JdbcMetricsPersistence implements MetricsPersistence {
     }
   }
 }
-
