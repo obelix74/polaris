@@ -24,13 +24,12 @@ import jakarta.inject.Inject;
 import org.apache.iceberg.metrics.CommitReport;
 import org.apache.iceberg.metrics.ScanReport;
 import org.apache.polaris.core.context.RealmContext;
-import org.apache.polaris.core.persistence.BasePersistence;
+import org.apache.polaris.core.persistence.ImmutableMetricsContext;
 import org.apache.polaris.core.persistence.MetaStoreManagerFactory;
+import org.apache.polaris.core.persistence.MetricsContext;
+import org.apache.polaris.core.persistence.MetricsPersistence;
 import org.apache.polaris.persistence.relational.jdbc.JdbcBasePersistenceImpl;
-import org.apache.polaris.persistence.relational.jdbc.models.MetricsReportConverter;
-import org.apache.polaris.persistence.relational.jdbc.models.ModelCommitMetricsReport;
-import org.apache.polaris.persistence.relational.jdbc.models.ModelScanMetricsReport;
-import org.apache.polaris.service.context.RealmContextConfiguration;
+import org.apache.polaris.persistence.relational.jdbc.JdbcMetricsPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,12 +46,10 @@ import org.slf4j.LoggerFactory;
  * <p>The processor includes full context information such as realm ID, catalog ID, principal name,
  * request ID, and OpenTelemetry trace context for correlation and analysis.
  *
- * <p><strong>Requirements:</strong>
- *
- * <ul>
- *   <li>Requires JDBC-based persistence backend ({@code polaris.persistence.type=relational-jdbc})
- *   <li>Database schema must include metrics tables (created via Flyway migrations)
- * </ul>
+ * <p>This implementation uses the {@link MetricsPersistence} interface to abstract the persistence
+ * backend, allowing different backends (JDBC, NoSQL, etc.) to provide their own implementations.
+ * Backends that do not support metrics persistence will receive a no-op implementation that
+ * silently discards metrics.
  *
  * <p>Configuration:
  *
@@ -74,39 +71,39 @@ public class PersistenceMetricsProcessor implements MetricsProcessor {
   private static final Logger LOGGER = LoggerFactory.getLogger(PersistenceMetricsProcessor.class);
 
   private final MetaStoreManagerFactory metaStoreManagerFactory;
-  private final RealmContextConfiguration realmContextConfiguration;
 
   @Inject
-  public PersistenceMetricsProcessor(
-      MetaStoreManagerFactory metaStoreManagerFactory,
-      RealmContextConfiguration realmContextConfiguration) {
+  public PersistenceMetricsProcessor(MetaStoreManagerFactory metaStoreManagerFactory) {
     this.metaStoreManagerFactory = metaStoreManagerFactory;
-    this.realmContextConfiguration = realmContextConfiguration;
     LOGGER.info("PersistenceMetricsProcessor initialized - metrics will be persisted to database");
   }
 
   @Override
   public void process(MetricsProcessingContext context) {
     try {
-      // Get the persistence session for the realm
-      String realmId = context.realmId();
-      RealmContext realmContext = () -> realmId;
-      BasePersistence session = metaStoreManagerFactory.getOrCreateSession(realmContext);
+      // Get the MetricsPersistence for the realm
+      MetricsPersistence metricsPersistence = getMetricsPersistence(context.realmId());
 
-      // Only JDBC persistence supports metrics tables
-      if (!(session instanceof JdbcBasePersistenceImpl jdbcPersistence)) {
-        LOGGER.warn(
-            "Persistence metrics processor requires JDBC persistence backend. "
-                + "Current backend: {}. Metrics will not be persisted.",
-            session.getClass().getSimpleName());
+      // Check if persistence is supported
+      if (!metricsPersistence.isSupported()) {
+        LOGGER.debug(
+            "Metrics persistence not supported for realm: {}. Metrics will not be persisted.",
+            context.realmId());
         return;
       }
 
+      // Build the metrics context
+      MetricsContext metricsContext = buildMetricsContext(context);
+
       // Persist based on report type
       if (context.metricsReport() instanceof ScanReport scanReport) {
-        persistScanReport(jdbcPersistence, context, scanReport);
+        metricsPersistence.writeScanReport(scanReport, metricsContext);
+        LOGGER.debug(
+            "Persisted scan metrics for {}.{}", context.catalogName(), context.tableIdentifier());
       } else if (context.metricsReport() instanceof CommitReport commitReport) {
-        persistCommitReport(jdbcPersistence, context, commitReport);
+        metricsPersistence.writeCommitReport(commitReport, metricsContext);
+        LOGGER.debug(
+            "Persisted commit metrics for {}.{}", context.catalogName(), context.tableIdentifier());
       } else {
         LOGGER.warn(
             "Unknown metrics report type: {}. Metrics will not be persisted.",
@@ -122,59 +119,43 @@ public class PersistenceMetricsProcessor implements MetricsProcessor {
     }
   }
 
-  private void persistScanReport(
-      JdbcBasePersistenceImpl jdbcPersistence,
-      MetricsProcessingContext context,
-      ScanReport scanReport) {
-    try {
-      String namespace = context.tableIdentifier().namespace().toString();
-      String catalogId = context.catalogId().map(String::valueOf).orElse(null);
+  /**
+   * Gets the appropriate MetricsPersistence implementation for the given realm.
+   *
+   * <p>This method creates the MetricsPersistence based on the underlying persistence backend. For
+   * JDBC backends, it returns a JdbcMetricsPersistence. For other backends, it returns the no-op
+   * implementation.
+   *
+   * @param realmId the realm identifier
+   * @return the MetricsPersistence implementation for the realm
+   */
+  private MetricsPersistence getMetricsPersistence(String realmId) {
+    RealmContext realmContext = () -> realmId;
+    var session = metaStoreManagerFactory.getOrCreateSession(realmContext);
 
-      ModelScanMetricsReport modelReport =
-          MetricsReportConverter.fromScanReport(
-              scanReport,
-              context.realmId(),
-              catalogId,
-              context.catalogName(),
-              namespace,
-              context.principalName().orElse(null),
-              context.requestId().orElse(null),
-              context.otelTraceId().orElse(null),
-              context.otelSpanId().orElse(null));
-
-      jdbcPersistence.writeScanMetricsReport(modelReport);
-      LOGGER.debug(
-          "Persisted scan metrics for {}.{}", context.catalogName(), context.tableIdentifier());
-    } catch (Exception e) {
-      LOGGER.error("Failed to persist scan metrics: {}", e.getMessage(), e);
+    if (session instanceof JdbcBasePersistenceImpl jdbcPersistence) {
+      return new JdbcMetricsPersistence(jdbcPersistence);
     }
+
+    return MetricsPersistence.NOOP;
   }
 
-  private void persistCommitReport(
-      JdbcBasePersistenceImpl jdbcPersistence,
-      MetricsProcessingContext context,
-      CommitReport commitReport) {
-    try {
-      String namespace = context.tableIdentifier().namespace().toString();
-      String catalogId = context.catalogId().map(String::valueOf).orElse(null);
-
-      ModelCommitMetricsReport modelReport =
-          MetricsReportConverter.fromCommitReport(
-              commitReport,
-              context.realmId(),
-              catalogId,
-              context.catalogName(),
-              namespace,
-              context.principalName().orElse(null),
-              context.requestId().orElse(null),
-              context.otelTraceId().orElse(null),
-              context.otelSpanId().orElse(null));
-
-      jdbcPersistence.writeCommitMetricsReport(modelReport);
-      LOGGER.debug(
-          "Persisted commit metrics for {}.{}", context.catalogName(), context.tableIdentifier());
-    } catch (Exception e) {
-      LOGGER.error("Failed to persist commit metrics: {}", e.getMessage(), e);
-    }
+  /**
+   * Builds a MetricsContext from the MetricsProcessingContext.
+   *
+   * @param context the metrics processing context
+   * @return the metrics context for persistence
+   */
+  private MetricsContext buildMetricsContext(MetricsProcessingContext context) {
+    return ImmutableMetricsContext.builder()
+        .realmId(context.realmId())
+        .catalogId(context.catalogId().map(String::valueOf))
+        .catalogName(context.catalogName())
+        .tableIdentifier(context.tableIdentifier())
+        .principalName(context.principalName())
+        .requestId(context.requestId())
+        .otelTraceId(context.otelTraceId())
+        .otelSpanId(context.otelSpanId())
+        .build();
   }
 }
