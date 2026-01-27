@@ -1,7 +1,7 @@
 --
 -- Licensed to the Apache Software Foundation (ASF) under one
--- or more contributor license agreements.  See the NOTICE file
--- distributed with this work for additional information
+-- or more contributor license agreements.  See the NOTICE file--
+--  distributed with this work for additional information
 -- regarding copyright ownership.  The ASF licenses this file
 -- to you under the Apache License, Version 2.0 (the
 -- "License"). You may not use this file except in compliance
@@ -15,11 +15,15 @@
 -- KIND, either express or implied.  See the License for the
 -- specific language governing permissions and limitations
 -- under the License.
---
 
+-- Changes from v2:
+--  * Added `events` table
+--  * Added `idempotency_records` table for REST idempotency
 -- Changes from v3:
 --  * Added `scan_metrics_report` table for scan metrics as first-class entities
+--  * Added `scan_metrics_report_roles` junction table for principal roles
 --  * Added `commit_metrics_report` table for commit metrics as first-class entities
+--  * Added `commit_metrics_report_roles` junction table for principal roles
 
 CREATE SCHEMA IF NOT EXISTS POLARIS_SCHEMA;
 SET search_path TO POLARIS_SCHEMA;
@@ -34,11 +38,142 @@ ON CONFLICT (version_key) DO UPDATE
 SET version_value = EXCLUDED.version_value;
 COMMENT ON TABLE version IS 'the version of the JDBC schema in use';
 
--- Include all tables from v3
--- (entities, grant_records, principal_authentication_data, policy_mapping_record, events)
--- These are assumed to already exist from v3 migration
+CREATE TABLE IF NOT EXISTS entities (
+    realm_id TEXT NOT NULL,
+    catalog_id BIGINT NOT NULL,
+    id BIGINT NOT NULL,
+    parent_id BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    entity_version INT NOT NULL,
+    type_code INT NOT NULL,
+    sub_type_code INT NOT NULL,
+    create_timestamp BIGINT NOT NULL,
+    drop_timestamp BIGINT NOT NULL,
+    purge_timestamp BIGINT NOT NULL,
+    to_purge_timestamp BIGINT NOT NULL,
+    last_update_timestamp BIGINT NOT NULL,
+    properties JSONB not null default '{}'::JSONB,
+    internal_properties JSONB not null default '{}'::JSONB,
+    grant_records_version INT NOT NULL,
+    location_without_scheme TEXT,
+    PRIMARY KEY (realm_id, id),
+    CONSTRAINT constraint_name UNIQUE (realm_id, catalog_id, parent_id, type_code, name)
+);
 
--- Scan Metrics Report Entity Table
+-- TODO: create indexes based on all query pattern.
+CREATE INDEX IF NOT EXISTS idx_entities ON entities (realm_id, catalog_id, id);
+CREATE INDEX IF NOT EXISTS idx_locations
+    ON entities USING btree (realm_id, parent_id, location_without_scheme)
+    WHERE location_without_scheme IS NOT NULL;
+
+COMMENT ON TABLE entities IS 'all the entities';
+
+COMMENT ON COLUMN entities.realm_id IS 'realm_id used for multi-tenancy';
+COMMENT ON COLUMN entities.catalog_id IS 'catalog id';
+COMMENT ON COLUMN entities.id IS 'entity id';
+COMMENT ON COLUMN entities.parent_id IS 'entity id of parent';
+COMMENT ON COLUMN entities.name IS 'entity name';
+COMMENT ON COLUMN entities.entity_version IS 'version of the entity';
+COMMENT ON COLUMN entities.type_code IS 'type code';
+COMMENT ON COLUMN entities.sub_type_code IS 'sub type of entity';
+COMMENT ON COLUMN entities.create_timestamp IS 'creation time of entity';
+COMMENT ON COLUMN entities.drop_timestamp IS 'time of drop of entity';
+COMMENT ON COLUMN entities.purge_timestamp IS 'time to start purging entity';
+COMMENT ON COLUMN entities.last_update_timestamp IS 'last time the entity is touched';
+COMMENT ON COLUMN entities.properties IS 'entities properties json';
+COMMENT ON COLUMN entities.internal_properties IS 'entities internal properties json';
+COMMENT ON COLUMN entities.grant_records_version IS 'the version of grant records change on the entity';
+
+CREATE TABLE IF NOT EXISTS grant_records (
+    realm_id TEXT NOT NULL,
+    securable_catalog_id BIGINT NOT NULL,
+    securable_id BIGINT NOT NULL,
+    grantee_catalog_id BIGINT NOT NULL,
+    grantee_id BIGINT NOT NULL,
+    privilege_code INTEGER,
+    PRIMARY KEY (realm_id, securable_catalog_id, securable_id, grantee_catalog_id, grantee_id, privilege_code)
+);
+
+COMMENT ON TABLE grant_records IS 'grant records for entities';
+
+COMMENT ON COLUMN grant_records.securable_catalog_id IS 'catalog id of the securable';
+COMMENT ON COLUMN grant_records.securable_id IS 'entity id of the securable';
+COMMENT ON COLUMN grant_records.grantee_catalog_id IS 'catalog id of the grantee';
+COMMENT ON COLUMN grant_records.grantee_id IS 'id of the grantee';
+COMMENT ON COLUMN grant_records.privilege_code IS 'privilege code';
+
+CREATE TABLE IF NOT EXISTS principal_authentication_data (
+    realm_id TEXT NOT NULL,
+    principal_id BIGINT NOT NULL,
+    principal_client_id VARCHAR(255) NOT NULL,
+    main_secret_hash VARCHAR(255) NOT NULL,
+    secondary_secret_hash VARCHAR(255) NOT NULL,
+    secret_salt VARCHAR(255) NOT NULL,
+    PRIMARY KEY (realm_id, principal_client_id)
+);
+
+COMMENT ON TABLE principal_authentication_data IS 'authentication data for client';
+
+CREATE TABLE IF NOT EXISTS policy_mapping_record (
+    realm_id TEXT NOT NULL,
+    target_catalog_id BIGINT NOT NULL,
+    target_id BIGINT NOT NULL,
+    policy_type_code INTEGER NOT NULL,
+    policy_catalog_id BIGINT NOT NULL,
+    policy_id BIGINT NOT NULL,
+    parameters JSONB NOT NULL DEFAULT '{}'::JSONB,
+    PRIMARY KEY (realm_id, target_catalog_id, target_id, policy_type_code, policy_catalog_id, policy_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_policy_mapping_record ON policy_mapping_record (realm_id, policy_type_code, policy_catalog_id, policy_id, target_catalog_id, target_id);
+
+CREATE TABLE IF NOT EXISTS events (
+    realm_id TEXT NOT NULL,
+    catalog_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    request_id TEXT,
+    event_type TEXT NOT NULL,
+    timestamp_ms BIGINT NOT NULL,
+    principal_name TEXT,
+    resource_type TEXT NOT NULL,
+    resource_identifier TEXT NOT NULL,
+    additional_properties JSONB NOT NULL DEFAULT '{}'::JSONB,
+    PRIMARY KEY (event_id)
+);
+
+-- Idempotency records (key-only idempotency; durable replay)
+CREATE TABLE IF NOT EXISTS idempotency_records (
+    realm_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    operation_type TEXT NOT NULL,
+    resource_id TEXT NOT NULL,            -- normalized request-derived resource identifier (not a generated entity id)
+
+    -- Finalization/replay
+    http_status INTEGER,                 -- NULL while IN_PROGRESS; set only on finalized 2xx/terminal 4xx
+    error_subtype TEXT,                  -- optional: e.g., already_exists, namespace_not_empty, idempotency_replay_failed
+    response_summary TEXT,               -- minimal body to reproduce equivalent response (JSON string)
+    response_headers TEXT,               -- small whitelisted headers to replay (JSON string)
+    finalized_at TIMESTAMP,              -- when http_status was written
+
+    -- Liveness/ops
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    heartbeat_at TIMESTAMP,              -- updated by owner while IN_PROGRESS
+    executor_id TEXT,                    -- owner pod/worker id
+    expires_at TIMESTAMP,
+
+    PRIMARY KEY (realm_id, idempotency_key)
+);
+
+-- Helpful indexes
+CREATE INDEX IF NOT EXISTS idx_idemp_realm_expires
+    ON idempotency_records (realm_id, expires_at);
+
+-- ============================================================================
+-- METRICS TABLES (NEW in v4)
+-- ============================================================================
+
+-- Scan Metrics Report Table
 CREATE TABLE IF NOT EXISTS scan_metrics_report (
     report_id TEXT NOT NULL,
     realm_id TEXT NOT NULL,
@@ -46,24 +181,24 @@ CREATE TABLE IF NOT EXISTS scan_metrics_report (
     catalog_name TEXT NOT NULL,
     namespace TEXT NOT NULL,
     table_name TEXT NOT NULL,
-    
+
     -- Report metadata
     timestamp_ms BIGINT NOT NULL,
     principal_name TEXT,
     request_id TEXT,
-    
+
     -- Trace correlation
     otel_trace_id TEXT,
     otel_span_id TEXT,
     report_trace_id TEXT,
-    
+
     -- Scan context
     snapshot_id BIGINT,
     schema_id INTEGER,
     filter_expression TEXT,
     projected_field_ids TEXT,
     projected_field_names TEXT,
-    
+
     -- Scan metrics
     result_data_files BIGINT DEFAULT 0,
     result_delete_files BIGINT DEFAULT 0,
@@ -77,17 +212,17 @@ CREATE TABLE IF NOT EXISTS scan_metrics_report (
     skipped_data_files BIGINT DEFAULT 0,
     skipped_delete_files BIGINT DEFAULT 0,
     total_planning_duration_ms BIGINT DEFAULT 0,
-    
+
     -- Equality/positional delete metrics
     equality_delete_files BIGINT DEFAULT 0,
     positional_delete_files BIGINT DEFAULT 0,
     indexed_delete_files BIGINT DEFAULT 0,
     total_delete_file_size_bytes BIGINT DEFAULT 0,
-    
+
     -- Additional metadata (for extensibility)
     metadata JSONB DEFAULT '{}'::JSONB,
-    
-    PRIMARY KEY (report_id)
+
+    PRIMARY KEY (realm_id, report_id)
 );
 
 COMMENT ON TABLE scan_metrics_report IS 'Scan metrics reports as first-class entities';
@@ -98,16 +233,21 @@ COMMENT ON COLUMN scan_metrics_report.otel_trace_id IS 'OpenTelemetry trace ID f
 COMMENT ON COLUMN scan_metrics_report.report_trace_id IS 'Trace ID from report metadata';
 
 -- Indexes for scan_metrics_report
-CREATE INDEX IF NOT EXISTS idx_scan_report_timestamp 
-    ON scan_metrics_report(timestamp_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_scan_report_table 
-    ON scan_metrics_report(catalog_name, namespace, table_name);
-CREATE INDEX IF NOT EXISTS idx_scan_report_trace 
-    ON scan_metrics_report(otel_trace_id) WHERE otel_trace_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_scan_report_principal 
-    ON scan_metrics_report(principal_name) WHERE principal_name IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_scan_report_realm
-    ON scan_metrics_report(realm_id);
+-- Note: Additional indexes for query patterns (by table, trace_id, principal) can be added
+-- when analytics APIs are introduced. Currently only timestamp index is needed for retention cleanup.
+CREATE INDEX IF NOT EXISTS idx_scan_report_timestamp
+    ON scan_metrics_report(realm_id, timestamp_ms DESC);
+
+-- Junction table for scan metrics report roles
+CREATE TABLE IF NOT EXISTS scan_metrics_report_roles (
+    realm_id TEXT NOT NULL,
+    report_id TEXT NOT NULL,
+    role_name TEXT NOT NULL,
+    PRIMARY KEY (realm_id, report_id, role_name),
+    FOREIGN KEY (realm_id, report_id) REFERENCES scan_metrics_report(realm_id, report_id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE scan_metrics_report_roles IS 'Activated principal roles for scan metrics reports';
 
 
 -- Commit Metrics Report Entity Table
@@ -167,7 +307,7 @@ CREATE TABLE IF NOT EXISTS commit_metrics_report (
     -- Additional metadata (for extensibility)
     metadata JSONB DEFAULT '{}'::JSONB,
 
-    PRIMARY KEY (report_id)
+    PRIMARY KEY (realm_id, report_id)
 );
 
 COMMENT ON TABLE commit_metrics_report IS 'Commit metrics reports as first-class entities';
@@ -177,18 +317,18 @@ COMMENT ON COLUMN commit_metrics_report.operation IS 'Commit operation type: app
 COMMENT ON COLUMN commit_metrics_report.otel_trace_id IS 'OpenTelemetry trace ID from HTTP headers';
 
 -- Indexes for commit_metrics_report
+-- Note: Additional indexes for query patterns (by table, trace_id, principal, operation, snapshot)
+-- can be added when analytics APIs are introduced. Currently only timestamp index is needed for retention cleanup.
 CREATE INDEX IF NOT EXISTS idx_commit_report_timestamp
-    ON commit_metrics_report(timestamp_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_commit_report_table
-    ON commit_metrics_report(catalog_name, namespace, table_name);
-CREATE INDEX IF NOT EXISTS idx_commit_report_trace
-    ON commit_metrics_report(otel_trace_id) WHERE otel_trace_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_commit_report_principal
-    ON commit_metrics_report(principal_name) WHERE principal_name IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_commit_report_operation
-    ON commit_metrics_report(operation);
-CREATE INDEX IF NOT EXISTS idx_commit_report_realm
-    ON commit_metrics_report(realm_id);
-CREATE INDEX IF NOT EXISTS idx_commit_report_snapshot
-    ON commit_metrics_report(snapshot_id);
+    ON commit_metrics_report(realm_id, timestamp_ms DESC);
 
+-- Junction table for commit metrics report roles
+CREATE TABLE IF NOT EXISTS commit_metrics_report_roles (
+    realm_id TEXT NOT NULL,
+    report_id TEXT NOT NULL,
+    role_name TEXT NOT NULL,
+    PRIMARY KEY (realm_id, report_id, role_name),
+    FOREIGN KEY (realm_id, report_id) REFERENCES commit_metrics_report(realm_id, report_id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE commit_metrics_report_roles IS 'Activated principal roles for commit metrics reports';
