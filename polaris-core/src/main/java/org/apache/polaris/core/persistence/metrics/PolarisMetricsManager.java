@@ -18,6 +18,7 @@
  */
 package org.apache.polaris.core.persistence.metrics;
 
+import com.google.common.annotations.Beta;
 import jakarta.annotation.Nonnull;
 import org.apache.polaris.core.PolarisCallContext;
 
@@ -40,6 +41,7 @@ import org.apache.polaris.core.PolarisCallContext;
  * support this interface. Backends that want actual metrics persistence (e.g., JDBC) override the
  * methods; others use the default no-op behavior.
  */
+@Beta
 public interface PolarisMetricsManager {
 
   /**
