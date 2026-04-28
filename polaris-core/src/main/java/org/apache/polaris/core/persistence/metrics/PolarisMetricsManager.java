@@ -20,7 +20,10 @@ package org.apache.polaris.core.persistence.metrics;
 
 import com.google.common.annotations.Beta;
 import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import org.apache.polaris.core.PolarisCallContext;
+import org.apache.polaris.core.persistence.pagination.Page;
+import org.apache.polaris.core.persistence.pagination.PageToken;
 
 /**
  * Interface for managing Iceberg metrics persistence through the metastore manager layer.
@@ -76,5 +79,35 @@ public interface PolarisMetricsManager {
   default void writeCommitMetrics(
       @Nonnull PolarisCallContext callCtx, @Nonnull CommitMetricsRecord record) {
     callCtx.getMetaStore().writeCommitReport(record);
+  }
+
+  default Page<ScanMetricsRecord> listScanMetrics(
+      @Nonnull PolarisCallContext callCtx,
+      long catalogId,
+      long tableId,
+      @Nullable Long snapshotId,
+      @Nullable String principalName,
+      @Nullable Long timestampFrom,
+      @Nullable Long timestampTo,
+      @Nonnull PageToken pageToken) {
+    return callCtx
+        .getMetaStore()
+        .listScanReports(
+            catalogId, tableId, snapshotId, principalName, timestampFrom, timestampTo, pageToken);
+  }
+
+  default Page<CommitMetricsRecord> listCommitMetrics(
+      @Nonnull PolarisCallContext callCtx,
+      long catalogId,
+      long tableId,
+      @Nullable Long snapshotId,
+      @Nullable String principalName,
+      @Nullable Long timestampFrom,
+      @Nullable Long timestampTo,
+      @Nonnull PageToken pageToken) {
+    return callCtx
+        .getMetaStore()
+        .listCommitReports(
+            catalogId, tableId, snapshotId, principalName, timestampFrom, timestampTo, pageToken);
   }
 }
